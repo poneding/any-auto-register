@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 _POOL_CURSOR_LOCK = threading.Lock()
 _POOL_CURSORS: dict[str, int] = {}
 
@@ -115,10 +114,10 @@ def resolve_forwardmail_pool_path(
             for path in base_dir.glob(pattern)
             if path.is_file() and "forwardmail" in path.name
         ]
-        
+
     if not candidates:
-         raise RuntimeError(f"mail 目录下未找到可用的转发邮箱池文件: {base_dir}")
-         
+        raise RuntimeError(f"mail 目录下未找到可用的转发邮箱池文件: {base_dir}")
+
     candidates.sort(key=lambda item: (item.stat().st_mtime, item.name), reverse=True)
     return candidates[0]
 
@@ -141,7 +140,9 @@ def load_forwardmail_pool_snapshot(
     preview_limit: int = 100,
 ) -> dict[str, Any]:
     try:
-        path, records = load_forwardmail_pool_records(pool_file=pool_file, pool_dir=pool_dir)
+        path, records = load_forwardmail_pool_records(
+            pool_file=pool_file, pool_dir=pool_dir
+        )
         limit = max(int(preview_limit or 0), 0)
         items = [
             {
@@ -173,7 +174,9 @@ def take_next_forwardmail_record(
     pool_file: str | None = None,
     pool_dir: str | None = None,
 ) -> tuple[Path, dict[str, str]]:
-    path, records = load_forwardmail_pool_records(pool_file=pool_file, pool_dir=pool_dir)
+    path, records = load_forwardmail_pool_records(
+        pool_file=pool_file, pool_dir=pool_dir
+    )
     key = str(path.resolve())
     with _POOL_CURSOR_LOCK:
         index = _POOL_CURSORS.get(key, 0)

@@ -294,6 +294,21 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                     proxy_pool.report_success(_proxy)
                 _log(task_id, f"[OK] 注册成功: {account.email}")
                 _save_task_log(req.platform, account.email, "success")
+                if str(merged_extra.get("mail_provider") or "").strip() == "forwardmail":
+                    try:
+                        from core.forwardmail_pool import remove_forwardmail_email_from_pool
+
+                        if remove_forwardmail_email_from_pool(
+                            email=account.email or "",
+                            pool_file=merged_extra.get("forwardmail_pool_file") or None,
+                            pool_dir=merged_extra.get("forwardmail_pool_dir") or None,
+                        ):
+                            _log(
+                                task_id,
+                                f"  [ForwardMail] 已从邮箱池移除: {account.email}",
+                            )
+                    except Exception as e:
+                        _log(task_id, f"  [ForwardMail] 邮箱池移除失败: {e}")
                 _auto_upload_integrations(task_id, saved_account or account)
                 cashier_url = (account.extra or {}).get("cashier_url", "")
                 if cashier_url:

@@ -3107,8 +3107,20 @@ class OAuthClient:
         otp_deadline = time.time() + otp_wait_seconds
         otp_sent_at = _otp_sent_at_baseline
         next_resend_at = time.time() + otp_resend_wait_seconds
+        try:
+            otp_max_exclude_skips = int(
+                self.config.get(
+                    "chatgpt_oauth_otp_max_exclude_skips",
+                    self.config.get("chatgpt_otp_max_exclude_skips", 15),
+                )
+                or 15
+            )
+        except Exception:
+            otp_max_exclude_skips = 15
+        otp_max_exclude_skips = max(3, min(otp_max_exclude_skips, 500))
+        otp_exclude_skip_count = 0
         self._log(
-            f"OAuth OTP 等待窗口: total={otp_wait_seconds}s, poll_window={otp_poll_window}s"
+            f"OAuth OTP 等待窗口: total={otp_wait_seconds}s, poll_window={otp_poll_window}s, max_exclude_skips={otp_max_exclude_skips}"
         )
 
         def validate_otp(code):
@@ -3231,6 +3243,7 @@ class OAuthClient:
                     code = None
 
                 if not code:
+                    otp_exclude_skip_count = 0
                     if time.time() >= next_resend_at and not self.last_error:
                         self._log(
                             f"暂未收到 OTP，触发重发（间隔 {otp_resend_wait_seconds}s）"
@@ -3246,9 +3259,16 @@ class OAuthClient:
                     continue
 
                 if code in tried_codes:
+                    otp_exclude_skip_count += 1
                     self._log(f"跳过已尝试验证码: {code}")
+                    if otp_exclude_skip_count >= otp_max_exclude_skips:
+                        self._set_error(
+                            f"已连续 {otp_exclude_skip_count} 次收到已尝试过的验证码，停止等待（上限 {otp_max_exclude_skips}）"
+                        )
+                        break
                     continue
 
+                otp_exclude_skip_count = 0
                 next_state = validate_otp(code)
                 if next_state:
                     return next_state
