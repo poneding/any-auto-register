@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-_POOL_CURSOR_LOCK = threading.Lock()
+_FORWARDMAIL_POOL_LOCK = threading.Lock()
 _POOL_CURSORS: dict[str, int] = {}
 
 
@@ -174,15 +174,46 @@ def take_next_forwardmail_record(
     pool_file: str | None = None,
     pool_dir: str | None = None,
 ) -> tuple[Path, dict[str, str]]:
-    path, records = load_forwardmail_pool_records(
-        pool_file=pool_file, pool_dir=pool_dir
-    )
-    key = str(path.resolve())
-    with _POOL_CURSOR_LOCK:
+    with _FORWARDMAIL_POOL_LOCK:
+        path, records = load_forwardmail_pool_records(
+            pool_file=pool_file, pool_dir=pool_dir
+        )
+        key = str(path.resolve())
         index = _POOL_CURSORS.get(key, 0)
         record = records[index % len(records)]
         _POOL_CURSORS[key] = index + 1
-    return path, record
+        return path, record
+
+
+def remove_forwardmail_email_from_pool(
+    *,
+    email: str,
+    pool_file: str | None = None,
+    pool_dir: str | None = None,
+) -> bool:
+    """Remove the first pool entry matching ``email`` (case-insensitive). Returns whether a row was removed."""
+    target = str(email or "").strip().lower()
+    if not target:
+        return False
+    with _FORWARDMAIL_POOL_LOCK:
+        path, records = load_forwardmail_pool_records(
+            pool_file=pool_file, pool_dir=pool_dir
+        )
+        remaining: list[dict[str, str]] = []
+        removed = False
+        for record in records:
+            rec_email = str(record.get("email") or "").strip().lower()
+            if not removed and rec_email == target:
+                removed = True
+                continue
+            remaining.append(record)
+        if not removed:
+            return False
+        path.write_text(
+            json.dumps(remaining, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return True
 
 
 def save_forwardmail_pool_json(
