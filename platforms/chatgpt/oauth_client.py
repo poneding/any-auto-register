@@ -2,12 +2,13 @@
 OAuth 客户端模块 - 处理 Codex OAuth 登录流程
 """
 
-import time
-import secrets
-import uuid
 import json
 import random
-from urllib.parse import urlparse, parse_qs
+import secrets
+import time
+import uuid
+from urllib.parse import parse_qs, urlparse
+
 from core.proxy_utils import build_requests_proxy_config
 from core.task_runtime import TaskInterruption
 
@@ -17,6 +18,8 @@ except ImportError:
     import requests as curl_requests
 
 from .phone_service import SMSToMePhoneService
+from .sentinel_browser import get_sentinel_token_via_browser
+from .sentinel_token import build_sentinel_token
 from .utils import (
     FlowState,
     build_browser_headers,
@@ -28,8 +31,6 @@ from .utils import (
     random_delay,
     seed_oai_device_cookie,
 )
-from .sentinel_token import build_sentinel_token
-from .sentinel_browser import get_sentinel_token_via_browser
 
 
 class OAuthClient:
@@ -128,7 +129,11 @@ class OAuthClient:
 
     def _set_error(self, message):
         raw_message = str(message or "").strip()
-        if self.last_stage and raw_message and f"[stage={self.last_stage}]" not in raw_message:
+        if (
+            self.last_stage
+            and raw_message
+            and f"[stage={self.last_stage}]" not in raw_message
+        ):
             self.last_error = f"[stage={self.last_stage}] {raw_message}"
         else:
             self.last_error = raw_message
@@ -189,24 +194,20 @@ class OAuthClient:
         self.impersonate = str(impersonate or "").strip()
 
         try:
-            self.session.headers.update(
-                {
-                    "User-Agent": user_agent,
-                    "Accept-Language": random.choice(
-                        [
-                            "en-US,en;q=0.9",
-                            "en-US,en;q=0.9,zh-CN;q=0.8",
-                            "en,en-US;q=0.9",
-                            "en-US,en;q=0.8",
-                        ]
-                    ),
-                    "sec-ch-ua": sec_ch_ua,
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"Windows"',
-                    "sec-ch-ua-arch": '"x86"',
-                    "sec-ch-ua-bitness": '"64"',
-                }
-            )
+            self.session.headers.update({
+                "User-Agent": user_agent,
+                "Accept-Language": random.choice([
+                    "en-US,en;q=0.9",
+                    "en-US,en;q=0.9,zh-CN;q=0.8",
+                    "en,en-US;q=0.9",
+                    "en-US,en;q=0.8",
+                ]),
+                "sec-ch-ua": sec_ch_ua,
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-ch-ua-arch": '"x86"',
+                "sec-ch-ua-bitness": '"64"',
+            })
         except Exception:
             pass
 
@@ -214,7 +215,6 @@ class OAuthClient:
             f"OAuth 指纹: ua={user_agent.split('Chrome/')[-1][:24]}..., sec-ch-ua={sec_ch_ua}, impersonate={impersonate}"
         )
         return user_agent, sec_ch_ua, impersonate
-
 
     @staticmethod
     def _iter_text_fragments(value):
@@ -236,15 +236,13 @@ class OAuthClient:
         fragments = [str(detail or "").strip()]
         if state is not None:
             fragments.extend(
-                cls._iter_text_fragments(
-                    {
-                        "page_type": state.page_type,
-                        "continue_url": state.continue_url,
-                        "current_url": state.current_url,
-                        "payload": state.payload,
-                        "raw": state.raw,
-                    }
-                )
+                cls._iter_text_fragments({
+                    "page_type": state.page_type,
+                    "continue_url": state.continue_url,
+                    "current_url": state.current_url,
+                    "payload": state.payload,
+                    "raw": state.raw,
+                })
             )
 
         combined = " | ".join(fragment for fragment in fragments if fragment).lower()
@@ -407,7 +405,10 @@ class OAuthClient:
 
     def _state_is_create_account_password(self, state: FlowState):
         target = f"{state.continue_url} {state.current_url}".lower()
-        return state.page_type == "create_account_password" or "create-account/password" in target
+        return (
+            state.page_type == "create_account_password"
+            or "create-account/password" in target
+        )
 
     def _state_is_email_otp(self, state: FlowState):
         target = f"{state.continue_url} {state.current_url}".lower()
@@ -755,9 +756,7 @@ class OAuthClient:
                 kwargs["impersonate"] = impersonate
             r_auth = self.session.get(authorize_url, **kwargs)
             final_url = str(r_auth.url)
-            self._log(
-                f"force_chatgpt_entry: authorize 最终跳转 {final_url[:160]}"
-            )
+            self._log(f"force_chatgpt_entry: authorize 最终跳转 {final_url[:160]}")
             return final_url
         except Exception as e:
             self._log(f"force_chatgpt_entry: 访问 authorize 异常: {e}")
@@ -1021,7 +1020,9 @@ class OAuthClient:
             self._log(f"/passwordless/send-otp -> {r.status_code}")
 
             if r.status_code != 200:
-                self._set_error(f"触发 passwordless OTP 失败: {r.status_code} - {r.text[:180]}")
+                self._set_error(
+                    f"触发 passwordless OTP 失败: {r.status_code} - {r.text[:180]}"
+                )
                 return None
 
             try:
@@ -1034,7 +1035,9 @@ class OAuthClient:
                 current_url=str(r.url) or f"{self.oauth_issuer}/email-verification",
             )
             if not self._state_is_email_otp(flow_state):
-                flow_state = self._state_from_url(f"{self.oauth_issuer}/email-verification")
+                flow_state = self._state_from_url(
+                    f"{self.oauth_issuer}/email-verification"
+                )
             self._log(f"passwordless OTP 已触发 {describe_flow_state(flow_state)}")
             return flow_state
         except Exception as e:
@@ -1081,7 +1084,9 @@ class OAuthClient:
             log_fn=lambda msg: self._log(f"username_password_create: {msg}"),
         )
         if sentinel_token:
-            self._log("username_password_create: 已通过 Playwright SentinelSDK 获取 token")
+            self._log(
+                "username_password_create: 已通过 Playwright SentinelSDK 获取 token"
+            )
         else:
             sentinel_token = build_sentinel_token(
                 self.session,
@@ -1456,8 +1461,12 @@ class OAuthClient:
                     or f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
                 )
                 if self._state_is_add_phone(state):
-                    consent_entry = f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
-                    self._log("步骤6: 当前处于 add_phone，改用 canonical consent URL 继续")
+                    consent_entry = (
+                        f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
+                    )
+                    self._log(
+                        "步骤6: 当前处于 add_phone，改用 canonical consent URL 继续"
+                    )
                 code, next_state = self._oauth_submit_workspace_and_org(
                     consent_entry,
                     device_id,
@@ -1481,7 +1490,9 @@ class OAuthClient:
                     self._log(f"workspace state -> {describe_flow_state(state)}")
                     continue
                 if not self.last_error:
-                    self._set_error(f"workspace/org 选择失败: {describe_flow_state(state)}")
+                    self._set_error(
+                        f"workspace/org 选择失败: {describe_flow_state(state)}"
+                    )
                 return None
 
             self._set_error(f"未支持的 OAuth 注册状态: {describe_flow_state(state)}")
@@ -1512,7 +1523,9 @@ class OAuthClient:
             f"birthdate={str(birthdate or '').strip() or '缺失'}"
         )
 
-        full_name = f"{str(first_name or '').strip()} {str(last_name or '').strip()}".strip()
+        full_name = (
+            f"{str(first_name or '').strip()} {str(last_name or '').strip()}".strip()
+        )
         if not full_name or not str(birthdate or "").strip():
             self._set_error("about_you 资料不完整: 缺少姓名或生日")
             return None
@@ -1570,7 +1583,9 @@ class OAuthClient:
                 or "sentinel" in (r.text or "").lower()
                 or "challenge" in (r.text or "").lower()
             ):
-                self._log("create_account 首次请求需要额外挑战，补发 sentinel 后重试...")
+                self._log(
+                    "create_account 首次请求需要额外挑战，补发 sentinel 后重试..."
+                )
                 sentinel_token = build_sentinel_token(
                     self.session,
                     device_id,
@@ -1594,7 +1609,9 @@ class OAuthClient:
                 consent_state = self._state_from_url(
                     f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
                 )
-                self._log(f"about_you 命中 already_exists，转入 {describe_flow_state(consent_state)}")
+                self._log(
+                    f"about_you 命中 already_exists，转入 {describe_flow_state(consent_state)}"
+                )
                 return consent_state
 
             if r.status_code != 200:
@@ -1814,7 +1831,11 @@ class OAuthClient:
                     self._log("换取 tokens 失败")
                 return tokens
 
-            if prefer_passwordless_login and (not force_password_login) and self._state_is_login_password(state):
+            if (
+                prefer_passwordless_login
+                and (not force_password_login)
+                and self._state_is_login_password(state)
+            ):
                 next_state = self._send_passwordless_login_otp(
                     email,
                     device_id,
@@ -1839,16 +1860,16 @@ class OAuthClient:
                     user_agent=user_agent,
                     sec_ch_ua=sec_ch_ua,
                     impersonate=impersonate,
-                    referer=state.current_url or state.continue_url or f"{self.oauth_issuer}/log-in/password",
+                    referer=state.current_url
+                    or state.continue_url
+                    or f"{self.oauth_issuer}/log-in/password",
                 )
                 if not next_state:
                     if not self.last_error:
                         self._set_error("密码验证后未进入下一步 OAuth 状态")
                     return None
                 if _should_stop_after_login(next_state):
-                    self._log(
-                        "登录链路已完成（密码验证后进入下一状态），按要求停止"
-                    )
+                    self._log("登录链路已完成（密码验证后进入下一状态），按要求停止")
                     self.last_state = next_state
                     self._set_error("登录链路已完成，按要求停止")
                     return None
@@ -1870,9 +1891,7 @@ class OAuthClient:
                         self._set_error("密码验证后未进入下一步 OAuth 状态")
                     return None
                 if _should_stop_after_login(next_state):
-                    self._log(
-                        "登录链路已完成（密码验证后进入下一状态），按要求停止"
-                    )
+                    self._log("登录链路已完成（密码验证后进入下一状态），按要求停止")
                     self.last_state = next_state
                     self._set_error("登录链路已完成，按要求停止")
                     return None
@@ -1885,7 +1904,9 @@ class OAuthClient:
                 and self._state_is_add_phone(state)
                 and self._state_requires_navigation(state)
             ):
-                self._log("步骤5: OTP 后命中 add_phone，先实际访问 continue_url 争取重签 workspace Cookie")
+                self._log(
+                    "步骤5: OTP 后命中 add_phone，先实际访问 continue_url 争取重签 workspace Cookie"
+                )
                 code, next_state = self._follow_flow_state(
                     state,
                     referer=referer,
@@ -1927,9 +1948,7 @@ class OAuthClient:
                         self._set_error("邮箱 OTP 验证后未进入下一步 OAuth 状态")
                     return None
                 if _should_stop_after_login(next_state):
-                    self._log(
-                        "登录链路已完成（OTP 验证后进入下一状态），按要求停止"
-                    )
+                    self._log("登录链路已完成（OTP 验证后进入下一状态），按要求停止")
                     self.last_state = next_state
                     self._set_error("登录链路已完成，按要求停止")
                     return None
@@ -1993,18 +2012,16 @@ class OAuthClient:
                     if next_state:
                         referer = state.current_url or referer
                         state = next_state
-                        self._log(f"add_phone -> workspace state -> {describe_flow_state(state)}")
+                        self._log(
+                            f"add_phone -> workspace state -> {describe_flow_state(state)}"
+                        )
                         continue
 
                     workspace_error = str(self.last_error or "").strip()
                     if prefer_passwordless_login and _continue_depth < 1:
                         self._log(
                             "步骤5: canonical consent 仍未拿到 workspace/callback"
-                            + (
-                                f" ({workspace_error})"
-                                if workspace_error
-                                else ""
-                            )
+                            + (f" ({workspace_error})" if workspace_error else "")
                             + "，重启一次全新 OAuth session + 新 PKCE"
                         )
                         self._recreate_session()
@@ -2085,7 +2102,9 @@ class OAuthClient:
                     consent_entry = (
                         f"{self.oauth_issuer}/sign-in-with-chatgpt/codex/consent"
                     )
-                    self._log("步骤6: 当前处于 add_phone，改用 canonical consent URL 继续")
+                    self._log(
+                        "步骤6: 当前处于 add_phone，改用 canonical consent URL 继续"
+                    )
                 code, next_state = self._oauth_submit_workspace_and_org(
                     consent_entry,
                     device_id,
@@ -2782,8 +2801,12 @@ class OAuthClient:
                 and "phone-verification"
                 not in f"{next_state.continue_url} {next_state.current_url}".lower()
             ):
-                if self._state_supports_workspace_resolution(next_state) or self._state_requires_navigation(next_state):
-                    self._log(f"add_phone 提交后已进入后续状态: {describe_flow_state(next_state)}")
+                if self._state_supports_workspace_resolution(
+                    next_state
+                ) or self._state_requires_navigation(next_state):
+                    self._log(
+                        f"add_phone 提交后已进入后续状态: {describe_flow_state(next_state)}"
+                    )
                     return next_state
                 self._set_error(
                     f"add-phone/send 未进入手机验证码页: {describe_flow_state(next_state)}"
@@ -2977,7 +3000,11 @@ class OAuthClient:
                 )
                 headers.update(generate_datadog_trace())
                 try:
-                    kwargs = {"headers": headers, "timeout": 30, "allow_redirects": False}
+                    kwargs = {
+                        "headers": headers,
+                        "timeout": 30,
+                        "allow_redirects": False,
+                    }
                     if impersonate:
                         kwargs["impersonate"] = impersonate
                     self._browser_pause()
@@ -3111,12 +3138,12 @@ class OAuthClient:
             otp_max_exclude_skips = int(
                 self.config.get(
                     "chatgpt_oauth_otp_max_exclude_skips",
-                    self.config.get("chatgpt_otp_max_exclude_skips", 15),
+                    self.config.get("chatgpt_otp_max_exclude_skips", 5),
                 )
-                or 15
+                or 5
             )
         except Exception:
-            otp_max_exclude_skips = 15
+            otp_max_exclude_skips = 5
         otp_max_exclude_skips = max(3, min(otp_max_exclude_skips, 500))
         otp_exclude_skip_count = 0
         self._log(
@@ -3186,7 +3213,8 @@ class OAuthClient:
                     or ""
                 ).strip()
                 cached_age = (
-                    time.time() - float(getattr(skymail_client, "_last_success_code_at", 0) or 0)
+                    time.time()
+                    - float(getattr(skymail_client, "_last_success_code_at", 0) or 0)
                     if cached_code
                     else None
                 )
@@ -3212,9 +3240,7 @@ class OAuthClient:
                     if cached_age is not None
                     else "近期"
                 )
-                self._log(
-                    f"检测到近期缓存 OTP，先直接尝试: {cached_code} ({age_text})"
-                )
+                self._log(f"检测到近期缓存 OTP，先直接尝试: {cached_code} ({age_text})")
                 next_state = validate_otp(cached_code)
                 if next_state:
                     return next_state
@@ -3305,4 +3331,3 @@ class OAuthClient:
                 f"OAuth 阶段 OTP 验证失败，已尝试 {len(tried_codes)} 个验证码，等待窗口 {otp_wait_seconds}s"
             )
         return None
-
