@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
-from typing import Optional
+from typing import Any, Optional
 from copy import deepcopy
 from core.db import TaskLog, engine
 from core.task_runtime import (
@@ -143,6 +143,32 @@ def _save_task_log(
         s.commit()
 
 
+def _task_log_email(
+    req: RegisterTaskRequest,
+    current_email: str,
+    mailbox: Any,
+    platform: Any,
+) -> str:
+    """Best-effort email for task history when register() did not return an Account."""
+    for candidate in (
+        str(current_email or "").strip(),
+        str(req.email or "").strip(),
+    ):
+        if candidate:
+            return candidate
+    mb = mailbox if mailbox is not None else getattr(platform, "mailbox", None)
+    if mb is not None:
+        v = getattr(mb, "_email", None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        rec = getattr(mb, "_selected_record", None)
+        if isinstance(rec, dict):
+            s = str(rec.get("email") or "").strip()
+            if s:
+                return s
+    return ""
+
+
 def _auto_upload_integrations(task_id: str, account):
     """注册成功后自动导入外部系统。"""
     try:
@@ -204,6 +230,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
             nonlocal next_start_time
             proxy_pool = None
             _proxy = None
+            _mailbox = None
+            _platform = None
             current_email = req.email or ""
             attempt_id: int | None = None
             try:
@@ -319,7 +347,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _log(task_id, f"[SKIP] 已跳过当前账号: {e}")
                 _save_task_log(
                     req.platform,
-                    current_email,
+                    _task_log_email(req, current_email, _mailbox, _platform),
                     "skipped",
                     error=str(e),
                 )
@@ -333,7 +361,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _log(task_id, f"[FAIL] 注册失败: {e}")
                 _save_task_log(
                     req.platform,
-                    current_email,
+                    _task_log_email(req, current_email, _mailbox, _platform),
                     "failed",
                     error=str(e),
                 )
